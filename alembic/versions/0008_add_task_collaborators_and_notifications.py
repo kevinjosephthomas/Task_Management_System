@@ -14,8 +14,12 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("tasks", sa.Column("assigned_to_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
-    op.add_column("tasks", sa.Column("assigned_by_id", sa.Integer(), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True))
+    # SQLite requires batch mode to add FK columns
+    with op.batch_alter_table("tasks", recreate="always") as batch_op:
+        batch_op.add_column(sa.Column("assigned_to_id", sa.Integer(), nullable=True))
+        batch_op.add_column(sa.Column("assigned_by_id", sa.Integer(), nullable=True))
+        batch_op.create_foreign_key("fk_tasks_assigned_to", "users", ["assigned_to_id"], ["id"], ondelete="SET NULL")
+        batch_op.create_foreign_key("fk_tasks_assigned_by", "users", ["assigned_by_id"], ["id"], ondelete="SET NULL")
 
     op.create_table(
         "task_collaborators",
@@ -42,5 +46,8 @@ def upgrade():
 def downgrade():
     op.drop_table("task_notifications")
     op.drop_table("task_collaborators")
-    op.drop_column("tasks", "assigned_by_id")
-    op.drop_column("tasks", "assigned_to_id")
+    with op.batch_alter_table("tasks", recreate="always") as batch_op:
+        batch_op.drop_constraint("fk_tasks_assigned_by", type_="foreignkey")
+        batch_op.drop_constraint("fk_tasks_assigned_to", type_="foreignkey")
+        batch_op.drop_column("assigned_by_id")
+        batch_op.drop_column("assigned_to_id")

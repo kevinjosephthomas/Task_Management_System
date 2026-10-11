@@ -14,18 +14,25 @@ depends_on = None
 
 
 def upgrade():
-    op.add_column("users", sa.Column("username", sa.String(100), nullable=True, unique=True))
-    op.add_column("users", sa.Column("full_name", sa.String(255), nullable=True))
-    op.add_column("users", sa.Column("bio", sa.Text(), nullable=True))
-    op.add_column("users", sa.Column("profile_picture_url", sa.String(500), nullable=True))
-    op.add_column("users", sa.Column("google_id", sa.String(255), nullable=True, unique=True))
-    op.add_column("users", sa.Column("oauth_provider", sa.String(50), nullable=True))
+    # SQLite requires batch mode for unique columns
+    with op.batch_alter_table("users", recreate="always") as batch_op:
+        batch_op.add_column(sa.Column("username", sa.String(100), nullable=True))
+        batch_op.add_column(sa.Column("full_name", sa.String(255), nullable=True))
+        batch_op.add_column(sa.Column("bio", sa.Text(), nullable=True))
+        batch_op.add_column(sa.Column("profile_picture_url", sa.String(500), nullable=True))
+        batch_op.add_column(sa.Column("google_id", sa.String(255), nullable=True))
+        batch_op.add_column(sa.Column("oauth_provider", sa.String(50), nullable=True))
+        batch_op.create_unique_constraint("uq_users_username", ["username"])
+        batch_op.create_unique_constraint("uq_users_google_id", ["google_id"])
 
 
 def downgrade():
-    op.drop_column("users", "oauth_provider")
-    op.drop_column("users", "google_id")
-    op.drop_column("users", "profile_picture_url")
-    op.drop_column("users", "bio")
-    op.drop_column("users", "full_name")
-    op.drop_column("users", "username")
+    with op.batch_alter_table("users", recreate="always") as batch_op:
+        batch_op.drop_constraint("uq_users_google_id", type_="unique")
+        batch_op.drop_constraint("uq_users_username", type_="unique")
+        batch_op.drop_column("oauth_provider")
+        batch_op.drop_column("google_id")
+        batch_op.drop_column("profile_picture_url")
+        batch_op.drop_column("bio")
+        batch_op.drop_column("full_name")
+        batch_op.drop_column("username")

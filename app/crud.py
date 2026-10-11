@@ -219,16 +219,13 @@ def list_tasks(
     user_id: int,
     filters: Optional[schemas.TaskFilter] = None,
 ) -> List[models.Task]:
-    collab_task_ids = db.query(models.TaskCollaborator.task_id).filter(
-        models.TaskCollaborator.user_id == user_id,
-    ).subquery()
-
+    """Return only tasks OWNED by user_id.
+    Tasks assigned to the user or shared with them appear in their own
+    dedicated endpoints (/tasks/assigned, /tasks/shared) so that they
+    never pollute another user's main task feed.
+    """
     query = db.query(models.Task).filter(
-        or_(
-            models.Task.user_id == user_id,
-            models.Task.assigned_to_id == user_id,
-            models.Task.id.in_(collab_task_ids),
-        )
+        models.Task.user_id == user_id,
     )
 
     if filters:
@@ -384,9 +381,13 @@ def search_and_filter_tasks(
 # -- Feature 6: Reminders -----------------------------------------------------
 
 def get_overdue_tasks(db: Session, user_id: int) -> List[dict]:
+    """Return overdue tasks the user owns OR is assigned to."""
     today = date.today()
     tasks = db.query(models.Task).filter(
-        models.Task.user_id == user_id,
+        or_(
+            models.Task.user_id == user_id,
+            models.Task.assigned_to_id == user_id,
+        ),
         models.Task.due_date < today,
         models.Task.status != "completed",
     ).order_by(models.Task.due_date.asc()).all()
@@ -399,16 +400,21 @@ def get_overdue_tasks(db: Session, user_id: int) -> List[dict]:
             "status": t.status,
             "priority": t.priority,
             "days_overdue": (today - t.due_date).days,
+            "is_owner": t.user_id == user_id,
         }
         for t in tasks
     ]
 
 
 def get_upcoming_tasks(db: Session, user_id: int, days_ahead: int = 3) -> List[dict]:
+    """Return upcoming tasks the user owns OR is assigned to."""
     today = date.today()
     end = today + timedelta(days=days_ahead)
     tasks = db.query(models.Task).filter(
-        models.Task.user_id == user_id,
+        or_(
+            models.Task.user_id == user_id,
+            models.Task.assigned_to_id == user_id,
+        ),
         models.Task.due_date >= today,
         models.Task.due_date <= end,
         models.Task.status != "completed",
@@ -422,6 +428,7 @@ def get_upcoming_tasks(db: Session, user_id: int, days_ahead: int = 3) -> List[d
             "status": t.status,
             "priority": t.priority,
             "days_until_due": (t.due_date - today).days,
+            "is_owner": t.user_id == user_id,
         }
         for t in tasks
     ]
@@ -453,11 +460,8 @@ def log_activity(
 
 
 def get_task_activity(db: Session, task_id: int, user_id: int) -> Optional[List[dict]]:
-    task = db.query(models.Task).filter(
-        models.Task.id == task_id,
-        models.Task.user_id == user_id,
-    ).first()
-    if not task:
+    # Allow owner AND assignee to view activity
+    if not can_access_task(db, task_id, user_id):
         return None
 
     activities = db.query(models.TaskActivity).filter(
@@ -508,10 +512,10 @@ def get_user_activity_summary(db: Session, user_id: int, limit: int = 20) -> Lis
 # -- Feature 8: Subtasks ------------------------------------------------------
 
 def create_subtask(db: Session, task_id: int, user_id: int, data: schemas.SubtaskCreate) -> Optional[models.Subtask]:
-    task = db.query(models.Task).filter(
-        models.Task.id == task_id,
-        models.Task.user_id == user_id,
-    ).first()
+    # Allow owner AND assignee/collaborators to add subtasks
+    if not can_access_task(db, task_id, user_id):
+        return None
+    task = db.get(models.Task, task_id)
     if not task:
         return None
 
@@ -533,11 +537,7 @@ def create_subtask(db: Session, task_id: int, user_id: int, data: schemas.Subtas
 
 
 def get_subtasks(db: Session, task_id: int, user_id: int) -> Optional[List[models.Subtask]]:
-    task = db.query(models.Task).filter(
-        models.Task.id == task_id,
-        models.Task.user_id == user_id,
-    ).first()
-    if not task:
+    if not can_access_task(db, task_id, user_id):
         return None
     return db.query(models.Subtask).filter(
         models.Subtask.task_id == task_id,

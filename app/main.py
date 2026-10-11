@@ -3,6 +3,13 @@ import csv
 import io
 import logging
 import os
+
+# Load .env file if present (local development)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # python-dotenv not installed; rely on real env vars
 from datetime import date, datetime, timezone
 from typing import List, Optional
 
