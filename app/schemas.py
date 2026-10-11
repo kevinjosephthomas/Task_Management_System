@@ -39,7 +39,7 @@ def _clean_title(v: Optional[str]) -> Optional[str]:
 class UserRegister(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=6, max_length=100)
-    username: Optional[str] = Field(None, min_length=3, max_length=100)
+    username: str = Field(..., min_length=3, max_length=100)
     full_name: Optional[str] = Field(None, max_length=255)
 
     @field_validator("email")
@@ -147,7 +147,7 @@ class TaskOut(BaseModel):
     due_date: Optional[date] = None
     due_datetime: Optional[datetime] = None
     created_at: Optional[datetime] = None
-    user_id: Optional[int] = None
+    user_id: int
     assigned_to_id: Optional[int] = None
     assigned_to_email: Optional[str] = None
     assigned_by_id: Optional[int] = None

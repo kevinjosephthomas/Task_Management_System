@@ -1,11 +1,12 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import "../styles/Auth.css";
 
 const API_URL = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || "";
 
 export default function Auth({ onLogin }) {
-  const [mode, setMode] = useState("login"); // "login" or "register"
+  const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [username, setUsername] = useState("");
@@ -13,6 +14,44 @@ export default function Auth({ onLogin }) {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const handleGoogleResponse = useCallback(async (response) => {
+    setError("");
+    setLoading(true);
+    try {
+      const res = await axios.post(`${API_URL}/auth/google`, { token: response.credential });
+      localStorage.setItem("access_token", res.data.access_token);
+      localStorage.setItem("user_email", "google-user");
+      onLogin("google-user");
+    } catch (err) {
+      const detail = err.response?.data?.detail || "Google sign-in failed. Try again.";
+      setError(typeof detail === "string" ? detail : JSON.stringify(detail));
+    } finally {
+      setLoading(false);
+    }
+  }, [onLogin]);
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID) return;
+    const script = document.createElement("script");
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.defer = true;
+    script.onload = () => {
+      if (window.google) {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleGoogleResponse,
+        });
+        window.google.accounts.id.renderButton(
+          document.getElementById("google-signin-btn"),
+          { theme: "outline", size: "large", width: "100%", text: "signin_with" }
+        );
+      }
+    };
+    document.body.appendChild(script);
+    return () => { document.body.removeChild(script); };
+  }, [handleGoogleResponse]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -24,7 +63,7 @@ export default function Auth({ onLogin }) {
       const endpoint = mode === "login" ? "/auth/login" : "/auth/register";
       const payload = mode === "login"
         ? { email, password }
-        : { email, password, username: username || undefined, full_name: fullName || undefined };
+        : { email, password, username, full_name: fullName || undefined };
       const response = await axios.post(`${API_URL}${endpoint}`, payload);
 
       if (mode === "register") {
@@ -56,6 +95,15 @@ export default function Auth({ onLogin }) {
         {error && <div className="auth-alert auth-alert--error" role="alert">{error}</div>}
         {success && <div className="auth-alert auth-alert--success" role="status">{success}</div>}
 
+        {GOOGLE_CLIENT_ID && (
+          <>
+            <div id="google-signin-btn" className="google-btn-wrapper"></div>
+            <div className="auth-divider">
+              <span>or</span>
+            </div>
+          </>
+        )}
+
         <form onSubmit={handleSubmit} className="auth-form">
           <label className="auth-label">
             Email
@@ -73,13 +121,14 @@ export default function Auth({ onLogin }) {
           {mode === "register" && (
             <>
               <label className="auth-label">
-                Username (optional)
+                Username
                 <input
                   id="auth-username"
                   type="text"
                   placeholder="cooluser"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
+                  required
                   minLength={3}
                   autoComplete="username"
                 />

@@ -33,9 +33,11 @@ def client():
 
 
 def register_and_login(client, email="test@example.com", password="password123", username=None, full_name=None):
-    payload = {"email": email, "password": password}
-    if username:
-        payload["username"] = username
+    if not username:
+        username = email.split("@")[0].replace(".", "_")
+        if len(username) < 3:
+            username = username + "_user"
+    payload = {"email": email, "password": password, "username": username}
     if full_name:
         payload["full_name"] = full_name
     client.post("/auth/register", json=payload)

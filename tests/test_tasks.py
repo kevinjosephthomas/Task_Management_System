@@ -34,7 +34,10 @@ def client():
 
 
 def register_and_login(client, email="test@example.com", password="password123"):
-    client.post("/auth/register", json={"email": email, "password": password})
+    username = email.split("@")[0].replace(".", "_")
+    if len(username) < 3:
+        username = username + "_user"
+    client.post("/auth/register", json={"email": email, "password": password, "username": username})
     r = client.post("/auth/login", json={"email": email, "password": password})
     token = r.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}

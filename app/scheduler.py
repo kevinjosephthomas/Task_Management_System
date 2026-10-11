@@ -89,6 +89,8 @@ def check_overdue():
                 continue
             days_overdue = (today - task.due_date).days
 
+            msg = f"'{task.title}' is overdue by {days_overdue} day{'s' if days_overdue != 1 else ''}"
+
             existing = db.query(models.TaskNotification).filter(
                 models.TaskNotification.task_id == task.id,
                 models.TaskNotification.user_id == user.id,
@@ -99,11 +101,30 @@ def check_overdue():
                     user_id=user.id,
                     task_id=task.id,
                     type="overdue_alert",
-                    message=f"'{task.title}' is overdue by {days_overdue} day{'s' if days_overdue != 1 else ''}",
+                    message=msg,
                 )
                 db.add(notif)
                 db.commit()
                 notifications.overdue_alert_email(user.email, task.title, days_overdue)
+
+            if task.assigned_to_id and task.assigned_to_id != user.id:
+                assignee = db.get(models.User, task.assigned_to_id)
+                if assignee:
+                    existing_a = db.query(models.TaskNotification).filter(
+                        models.TaskNotification.task_id == task.id,
+                        models.TaskNotification.user_id == assignee.id,
+                        models.TaskNotification.type == "overdue_alert",
+                    ).first()
+                    if not existing_a:
+                        notif = models.TaskNotification(
+                            user_id=assignee.id,
+                            task_id=task.id,
+                            type="overdue_alert",
+                            message=msg,
+                        )
+                        db.add(notif)
+                        db.commit()
+                        notifications.overdue_alert_email(assignee.email, task.title, days_overdue)
 
         logger.info(f"Overdue check complete: {len(tasks)} overdue tasks")
     except Exception as e:

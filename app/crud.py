@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.auth import hash_password, verify_password
 from app.transitions import validate_transition
+from app.notifications import task_assigned_email
 
 
 # -- User operations -----------------------------------------------------------
@@ -16,10 +17,11 @@ def create_user(db: Session, email: str, password: str, username: str = None, fu
     existing = db.query(models.User).filter(models.User.email == email).first()
     if existing:
         raise ValueError(f"Email {email} already registered")
-    if username:
-        existing_username = db.query(models.User).filter(models.User.username == username).first()
-        if existing_username:
-            raise ValueError(f"Username {username} already taken")
+    if not username:
+        raise ValueError("Username is required")
+    existing_username = db.query(models.User).filter(models.User.username == username).first()
+    if existing_username:
+        raise ValueError(f"Username {username} already taken")
     user = models.User(
         email=email,
         hashed_password=hash_password(password),
@@ -200,10 +202,14 @@ def create_task(db: Session, user_id: int, data: schemas.TaskCreate) -> models.T
 
     if assigned_to_id and assigned_to_id != user_id:
         assigner = db.get(models.User, user_id)
+        assignee = db.get(models.User, assigned_to_id)
+        assigner_email = assigner.email if assigner else "someone"
         create_notification(
             db, assigned_to_id, task.id, "task_assigned",
-            f"You were assigned to '{task.title}' by {assigner.email if assigner else 'someone'}",
+            f"You were assigned to '{task.title}' by {assigner_email}",
         )
+        if assignee:
+            task_assigned_email(assignee.email, task.title, assigner_email)
 
     return _enrich_task(db, task)
 
@@ -213,7 +219,17 @@ def list_tasks(
     user_id: int,
     filters: Optional[schemas.TaskFilter] = None,
 ) -> List[models.Task]:
-    query = db.query(models.Task).filter(models.Task.user_id == user_id)
+    collab_task_ids = db.query(models.TaskCollaborator.task_id).filter(
+        models.TaskCollaborator.user_id == user_id,
+    ).subquery()
+
+    query = db.query(models.Task).filter(
+        or_(
+            models.Task.user_id == user_id,
+            models.Task.assigned_to_id == user_id,
+            models.Task.id.in_(collab_task_ids),
+        )
+    )
 
     if filters:
         if filters.status:
@@ -234,11 +250,12 @@ def list_tasks(
 
 
 def get_task(db: Session, task_id: int, user_id: int) -> Optional[models.Task]:
-    task = db.query(models.Task).filter(
-        models.Task.id == task_id,
-        models.Task.user_id == user_id,
-    ).first()
-    return _enrich_task(db, task) if task else None
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        return None
+    if not can_access_task(db, task_id, user_id):
+        return None
+    return _enrich_task(db, task)
 
 
 def update_task(db: Session, task: models.Task, data: schemas.TaskUpdate, user_id: int = None) -> models.Task:
@@ -275,10 +292,12 @@ def update_task(db: Session, task: models.Task, data: schemas.TaskUpdate, user_i
         task.assigned_by_id = uid
         if target.id != old_assigned and target.id != uid:
             assigner = db.get(models.User, uid)
+            assigner_email = assigner.email if assigner else "someone"
             create_notification(
                 db, target.id, task.id, "task_assigned",
-                f"You were assigned to '{task.title}' by {assigner.email if assigner else 'someone'}",
+                f"You were assigned to '{task.title}' by {assigner_email}",
             )
+            task_assigned_email(target.email, task.title, assigner_email)
 
     db.commit()
     db.refresh(task)
@@ -308,7 +327,17 @@ def search_and_filter_tasks(
     limit: int = 100,
     offset: int = 0,
 ) -> Tuple[int, List[models.Task]]:
-    query = db.query(models.Task).filter(models.Task.user_id == user_id)
+    collab_task_ids = db.query(models.TaskCollaborator.task_id).filter(
+        models.TaskCollaborator.user_id == user_id,
+    ).subquery()
+
+    query = db.query(models.Task).filter(
+        or_(
+            models.Task.user_id == user_id,
+            models.Task.assigned_to_id == user_id,
+            models.Task.id.in_(collab_task_ids),
+        )
+    )
 
     if search:
         pattern = f"%{search.lower()}%"
@@ -690,10 +719,12 @@ def assign_task(db: Session, task_id: int, owner_id: int, assignee_email: str) -
 
     if target.id != owner_id and target.id != old_assigned:
         assigner = db.get(models.User, owner_id)
+        assigner_email = assigner.email if assigner else "someone"
         create_notification(
             db, target.id, task.id, "task_assigned",
-            f"You were assigned to '{task.title}' by {assigner.email if assigner else 'someone'}",
+            f"You were assigned to '{task.title}' by {assigner_email}",
         )
+        task_assigned_email(target.email, task.title, assigner_email)
 
     return _enrich_task(db, task)
 
