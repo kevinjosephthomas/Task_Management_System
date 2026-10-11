@@ -35,7 +35,16 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        # Production: set FRONTEND_URL env var to your Netlify URL
+        # e.g. FRONTEND_URL=https://your-app.netlify.app
+        *([os.getenv("FRONTEND_URL")] if os.getenv("FRONTEND_URL") else []),
+        # Allow all *.netlify.app subdomains for preview deploys
+        "https://*.netlify.app",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

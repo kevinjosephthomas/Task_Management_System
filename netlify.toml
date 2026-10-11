@@ -1,0 +1,21 @@
+[build]
+  base = "frontend"
+  publish = "build"
+  command = "npm run build"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+# SPA redirect — all routes handled by React Router
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Proxy API calls to backend during local Netlify Dev
+# Replace the URL below with your Render backend URL after deploying
+[[redirects]]
+  from = "/api/*"
+  to = "https://your-backend.onrender.com/:splat"
+  status = 200
+  force = false
