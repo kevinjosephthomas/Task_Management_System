@@ -18,6 +18,13 @@ class Priority(str, Enum):
     high = "high"
 
 
+class CollaboratorRole(str, Enum):
+    owner = "owner"
+    manager = "manager"
+    contributor = "contributor"
+    viewer = "viewer"
+
+
 def _clean_title(v: Optional[str]) -> Optional[str]:
     if v is None:
         return v
@@ -32,6 +39,8 @@ def _clean_title(v: Optional[str]) -> Optional[str]:
 class UserRegister(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
     password: str = Field(..., min_length=6, max_length=100)
+    username: Optional[str] = Field(None, min_length=3, max_length=100)
+    full_name: Optional[str] = Field(None, max_length=255)
 
     @field_validator("email")
     @classmethod
@@ -46,10 +55,14 @@ class UserLogin(BaseModel):
     password: str
 
 
+class GoogleAuthRequest(BaseModel):
+    token: str
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
-    expires_in: int  # seconds
+    expires_in: int
 
 
 class UserOut(BaseModel):
@@ -57,7 +70,31 @@ class UserOut(BaseModel):
 
     id: int
     email: str
+    username: Optional[str] = None
+    full_name: Optional[str] = None
     created_at: Optional[datetime] = None
+
+
+class UserProfileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    username: Optional[str] = None
+    full_name: Optional[str] = None
+    bio: Optional[str] = None
+    profile_picture_url: Optional[str] = None
+    oauth_provider: Optional[str] = None
+    timezone: Optional[str] = "UTC"
+    created_at: Optional[datetime] = None
+
+
+class UserProfileUpdate(BaseModel):
+    username: Optional[str] = Field(None, min_length=3, max_length=100)
+    full_name: Optional[str] = Field(None, max_length=255)
+    bio: Optional[str] = Field(None, max_length=2000)
+    profile_picture_url: Optional[str] = Field(None, max_length=500)
+    timezone: Optional[str] = Field(None, max_length=50)
 
 
 # -- Task schemas --------------------------------------------------------------
@@ -68,6 +105,8 @@ class TaskCreate(BaseModel):
     description: Optional[str] = Field(None, max_length=2000)
     priority: Optional[Priority] = Priority.medium
     due_date: Optional[date] = None
+    due_datetime: Optional[datetime] = None
+    assigned_to_email: Optional[str] = None
 
     _v_title = field_validator("title")(_clean_title)
 
@@ -79,6 +118,8 @@ class TaskUpdate(BaseModel):
     status: Optional[TaskStatus] = None
     priority: Optional[Priority] = None
     due_date: Optional[date] = None
+    due_datetime: Optional[datetime] = None
+    assigned_to_email: Optional[str] = None
 
     _v_title = field_validator("title")(_clean_title)
 
@@ -104,17 +145,22 @@ class TaskOut(BaseModel):
     status: TaskStatus
     priority: Priority = Priority.medium
     due_date: Optional[date] = None
+    due_datetime: Optional[datetime] = None
     created_at: Optional[datetime] = None
     user_id: Optional[int] = None
+    assigned_to_id: Optional[int] = None
+    assigned_to_email: Optional[str] = None
+    assigned_by_id: Optional[int] = None
     is_overdue: Optional[bool] = None
     subtasks: Optional[List[SubtaskOut]] = []
     subtask_completion: Optional[dict] = None
+    deadline_info: Optional[dict] = None
 
 
 class TaskFilter(BaseModel):
     status: Optional[str] = None
     priority: Optional[str] = None
-    sort_by: Optional[str] = "created_at"  # "created_at", "due_date", "priority"
+    sort_by: Optional[str] = "created_at"
 
 
 class ErrorResponse(BaseModel):
@@ -207,3 +253,45 @@ class CommentOut(BaseModel):
     content: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+
+
+# -- Feature A: Enhanced Collaboration ----------------------------------------
+
+class AssignTaskRequest(BaseModel):
+    email: str
+
+
+class AddCollaboratorRequest(BaseModel):
+    email: str
+    role: CollaboratorRole = CollaboratorRole.viewer
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: CollaboratorRole) -> CollaboratorRole:
+        if v not in (CollaboratorRole.owner, CollaboratorRole.manager,
+                     CollaboratorRole.contributor, CollaboratorRole.viewer):
+            raise ValueError("Invalid role")
+        return v
+
+
+class CollaboratorOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    user_id: int
+    user_email: Optional[str] = None
+    role: str
+    created_at: Optional[datetime] = None
+
+
+class NotificationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    task_id: Optional[int] = None
+    type: str
+    message: str
+    read: bool = False
+    created_at: Optional[datetime] = None

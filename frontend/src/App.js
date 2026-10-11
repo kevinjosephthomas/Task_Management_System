@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import Auth from "./pages/Auth";
 import TaskList from "./components/TaskList";
 import NotificationBell from "./components/NotificationBell";
+import Profile from "./components/Profile";
 import "./App.css";
 
 export default function App() {
@@ -29,6 +30,8 @@ export default function App() {
     setUserEmail("");
   };
 
+  const [showProfile, setShowProfile] = useState(false);
+
   if (!isLoggedIn) {
     return <Auth onLogin={handleLogin} />;
   }
@@ -42,7 +45,13 @@ export default function App() {
         </div>
         <div className="app-header-user">
           <NotificationBell />
-          <span className="user-email" title={userEmail}>{userEmail}</span>
+          <button
+            className="profile-trigger-btn"
+            onClick={() => setShowProfile(true)}
+            title="Profile Settings"
+          >
+            {"👤"} {userEmail.split("@")[0]}
+          </button>
           <button id="logout-btn" className="logout-btn" onClick={handleLogout}>
             Log Out
           </button>
@@ -51,6 +60,7 @@ export default function App() {
       <main>
         <TaskList />
       </main>
+      {showProfile && <Profile onClose={() => setShowProfile(false)} />}
     </div>
   );
 }

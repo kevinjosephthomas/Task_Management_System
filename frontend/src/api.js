@@ -79,6 +79,40 @@ export const getSharedTasks = () =>
 export const exportCSV = (filters) =>
   client.post("/tasks/export/csv", filters, { responseType: "blob" }).then((r) => r.data);
 
+// Feature A: Task Assignment & Collaborators
+export const assignTask = (taskId, email) =>
+  client.post(`/tasks/${taskId}/assign`, { email }).then((r) => r.data);
+export const addCollaborator = (taskId, email, role = "viewer") =>
+  client.post(`/tasks/${taskId}/collaborators`, { email, role }).then((r) => r.data);
+export const getCollaborators = (taskId) =>
+  client.get(`/tasks/${taskId}/collaborators`).then((r) => r.data);
+export const removeCollaborator = (taskId, collaboratorId) =>
+  client.delete(`/tasks/${taskId}/collaborators/${collaboratorId}`);
+export const getAssignedTasks = () =>
+  client.get("/tasks/assigned").then((r) => r.data);
+
+// Notifications
+export const getNotifications = (unreadOnly = false, limit = 50) =>
+  client.get("/notifications", { params: { unread_only: unreadOnly, limit } }).then((r) => r.data);
+export const markNotificationRead = (id) =>
+  client.put(`/notifications/${id}/read`).then((r) => r.data);
+export const markAllNotificationsRead = () =>
+  client.put("/notifications/read-all").then((r) => r.data);
+
+// Feature B: Auth & Profile
+export const getProfile = () =>
+  client.get("/auth/profile").then((r) => r.data);
+export const updateProfile = (data) =>
+  client.put("/auth/profile", data).then((r) => r.data);
+export const googleLogin = (token) =>
+  client.post("/auth/google", { token }).then((r) => r.data);
+export const getTimezones = () =>
+  client.get("/auth/timezones").then((r) => r.data);
+
+// Feature C: Deadline
+export const getTaskDeadline = (taskId) =>
+  client.get(`/tasks/${taskId}/deadline`).then((r) => r.data);
+
 // Turn any axios error into a readable string
 export function errorMessage(err) {
   if (!err.response) return "Cannot reach the server. Is the backend running?";

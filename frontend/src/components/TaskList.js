@@ -3,10 +3,12 @@ import KanbanBoard from "./KanbanBoard";
 import TaskForm from "./TaskForm";
 import Analytics from "./Analytics";
 import SearchBar from "./SearchBar";
+import AssignedTasks from "./AssignedTasks";
 import "../styles/TaskList.css";
 
 const VIEWS = [
   { id: "kanban",    label: "Kanban" },
+  { id: "assigned",  label: "Assigned to Me" },
   { id: "analytics", label: "Analytics" },
 ];
 
@@ -38,7 +40,7 @@ export default function TaskList() {
         ))}
       </div>
 
-      {view !== "analytics" && <TaskForm onCreated={handleTaskCreated} />}
+      {view !== "analytics" && view !== "assigned" && <TaskForm onCreated={handleTaskCreated} />}
       {view === "kanban" && <SearchBar onSearch={handleSearch} />}
 
       {view === "kanban" && (
@@ -47,6 +49,7 @@ export default function TaskList() {
           searchParams={searchParams}
         />
       )}
+      {view === "assigned" && <AssignedTasks />}
       {view === "analytics" && <Analytics />}
     </div>
   );
