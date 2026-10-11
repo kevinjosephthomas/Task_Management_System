@@ -1,6 +1,8 @@
 """FastAPI application: routes, error handling, CORS."""
 import csv
 import io
+import logging
+import os
 from datetime import date, datetime, timezone
 from typing import List, Optional
 
@@ -14,11 +16,14 @@ from app import crud, models, schemas
 from app.auth import create_access_token
 from app.database import get_current_user, get_db
 from app.transitions import InvalidTransition
+from app.utils import COMMON_TIMEZONES
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Task Management API",
-    description="CRUD API for tasks with authentication, Kanban board, priorities, due dates, and analytics.",
-    version="2.0.0",
+    description="CRUD API for tasks with authentication, Kanban board, priorities, due dates, analytics, collaboration, and automated reminders.",
+    version="3.0.0",
 )
 
 app.add_middleware(
@@ -29,6 +34,24 @@ app.add_middleware(
 )
 
 
+@app.on_event("startup")
+def startup_event():
+    try:
+        from app.scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.warning(f"Scheduler start failed (non-fatal): {e}")
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    try:
+        from app.scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass
+
+
 @app.exception_handler(SQLAlchemyError)
 async def db_error_handler(request, exc):
     from fastapi.responses import JSONResponse
@@ -37,7 +60,7 @@ async def db_error_handler(request, exc):
 
 @app.get("/", include_in_schema=False)
 def root():
-    return {"message": "Task Management API v2. See /docs for Swagger UI."}
+    return {"message": "Task Management API v3. See /docs for Swagger UI."}
 
 
 # -- Auth endpoints (public) --------------------------------------------------
@@ -51,7 +74,7 @@ def root():
 )
 def register(user: schemas.UserRegister, db: Session = Depends(get_db)):
     try:
-        return crud.create_user(db, user.email, user.password)
+        return crud.create_user(db, user.email, user.password, user.username, user.full_name)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -74,6 +97,92 @@ def login(credentials: schemas.UserLogin, db: Session = Depends(get_db)):
     }
 
 
+@app.post(
+    "/auth/google",
+    response_model=schemas.TokenResponse,
+    tags=["auth"],
+    operation_id="google_login",
+)
+def google_login(data: schemas.GoogleAuthRequest, db: Session = Depends(get_db)):
+    try:
+        from google.oauth2 import id_token
+        from google.auth.transport import requests as google_requests
+
+        google_client_id = os.getenv("GOOGLE_CLIENT_ID", "")
+        if not google_client_id:
+            raise HTTPException(status_code=501, detail="Google OAuth not configured")
+
+        idinfo = id_token.verify_oauth2_token(
+            data.token,
+            google_requests.Request(),
+            google_client_id,
+        )
+        user = crud.create_or_get_google_user(
+            db,
+            google_id=idinfo["sub"],
+            email=idinfo["email"],
+            full_name=idinfo.get("name"),
+            picture=idinfo.get("picture"),
+        )
+        token, expire = create_access_token(user.id, user.email)
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "expires_in": int((expire - datetime.now(timezone.utc)).total_seconds()),
+        }
+    except ImportError:
+        raise HTTPException(status_code=501, detail="Google OAuth dependencies not installed")
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid Google token")
+
+
+# -- User Profile endpoints ---------------------------------------------------
+
+@app.get(
+    "/auth/profile",
+    response_model=schemas.UserProfileOut,
+    tags=["auth"],
+    operation_id="get_profile",
+)
+def get_profile(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    user = db.get(models.User, current_user["id"])
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@app.put(
+    "/auth/profile",
+    response_model=schemas.UserProfileOut,
+    tags=["auth"],
+    operation_id="update_profile",
+)
+def update_profile(
+    data: schemas.UserProfileUpdate,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        user = crud.update_user_profile(db, current_user["id"], data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return user
+
+
+@app.get(
+    "/auth/timezones",
+    tags=["auth"],
+    operation_id="list_timezones",
+)
+def list_timezones():
+    return {"timezones": COMMON_TIMEZONES}
+
+
 # -- Task endpoints (protected) -----------------------------------------------
 
 @app.post(
@@ -88,7 +197,10 @@ def create_task(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return crud.create_task(db, current_user["id"], task)
+    try:
+        return crud.create_task(db, current_user["id"], task)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.get(
@@ -121,7 +233,6 @@ def get_task_stats(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Return task statistics for the current user."""
     tasks = db.query(models.Task).filter(models.Task.user_id == current_user["id"]).all()
     today = date.today()
 
@@ -270,7 +381,7 @@ def get_user_activity_summary(
     return {"count": len(activities), "activities": activities}
 
 
-# -- Feature 9: Collaboration -------------------------------------------------
+# -- Feature 9 / A: Collaboration & Team Management ---------------------------
 
 @app.get(
     "/tasks/shared",
@@ -283,6 +394,77 @@ def get_shared_tasks(
     db: Session = Depends(get_db),
 ):
     return crud.get_shared_tasks_for_user(db, current_user["id"])
+
+
+@app.get(
+    "/tasks/assigned",
+    response_model=List[schemas.TaskOut],
+    tags=["collaboration"],
+    operation_id="get_assigned_tasks",
+)
+def get_assigned_tasks(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return crud.get_tasks_assigned_to_user(db, current_user["id"])
+
+
+# -- Notifications endpoints --------------------------------------------------
+
+@app.get(
+    "/notifications",
+    tags=["notifications"],
+    operation_id="get_notifications",
+)
+def get_notifications(
+    unread_only: bool = Query(False),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    notifs = crud.get_notifications(db, current_user["id"], unread_only, limit)
+    return {
+        "count": len(notifs),
+        "notifications": [
+            {
+                "id": n.id,
+                "task_id": n.task_id,
+                "type": n.type,
+                "message": n.message,
+                "read": n.read,
+                "created_at": str(n.created_at) if n.created_at else None,
+            }
+            for n in notifs
+        ],
+    }
+
+
+@app.put(
+    "/notifications/{notification_id}/read",
+    tags=["notifications"],
+    operation_id="mark_notification_read",
+)
+def mark_notification_read(
+    notification_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not crud.mark_notification_read(db, notification_id, current_user["id"]):
+        raise HTTPException(status_code=404, detail="Notification not found")
+    return {"message": "Notification marked as read"}
+
+
+@app.put(
+    "/notifications/read-all",
+    tags=["notifications"],
+    operation_id="mark_all_notifications_read",
+)
+def mark_all_read(
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    count = crud.mark_all_notifications_read(db, current_user["id"])
+    return {"message": f"Marked {count} notifications as read"}
 
 
 # -- Single task endpoints (must be after /tasks/... paths) --------------------
@@ -343,6 +525,114 @@ def delete_task(
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     crud.delete_task(db, task, current_user["id"])
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# -- Feature A: Task Assignment & Collaborator endpoints -----------------------
+
+@app.post(
+    "/tasks/{task_id}/assign",
+    response_model=schemas.TaskOut,
+    tags=["collaboration"],
+    operation_id="assign_task",
+)
+def assign_task(
+    task_id: int,
+    data: schemas.AssignTaskRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        task = crud.assign_task(db, task_id, current_user["id"], data.email)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found or not owned by you")
+    return task
+
+
+@app.post(
+    "/tasks/{task_id}/collaborators",
+    tags=["collaboration"],
+    operation_id="add_collaborator",
+)
+def add_collaborator(
+    task_id: int,
+    data: schemas.AddCollaboratorRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    try:
+        collab = crud.add_collaborator(db, task_id, current_user["id"], data.email, data.role.value)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not collab:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found or not owned by you")
+    user = db.get(models.User, collab.user_id)
+    return {
+        "id": collab.id,
+        "task_id": collab.task_id,
+        "user_id": collab.user_id,
+        "user_email": user.email if user else None,
+        "role": collab.role,
+        "message": f"Collaborator added with role '{collab.role}'",
+    }
+
+
+@app.get(
+    "/tasks/{task_id}/collaborators",
+    tags=["collaboration"],
+    operation_id="get_collaborators",
+)
+def get_collaborators(
+    task_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    collabs = crud.get_collaborators(db, task_id, current_user["id"])
+    if collabs is None:
+        raise HTTPException(status_code=403, detail="No access to this task")
+    return {"task_id": task_id, "count": len(collabs), "collaborators": collabs}
+
+
+@app.delete(
+    "/tasks/{task_id}/collaborators/{collaborator_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["collaboration"],
+    operation_id="remove_collaborator",
+)
+def remove_collaborator(
+    task_id: int,
+    collaborator_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if not crud.remove_collaborator(db, task_id, current_user["id"], collaborator_id):
+        raise HTTPException(status_code=404, detail="Collaborator not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# -- Feature C: Deadline countdown endpoint ------------------------------------
+
+@app.get(
+    "/tasks/{task_id}/deadline",
+    tags=["tasks"],
+    operation_id="get_task_deadline",
+)
+def get_task_deadline(
+    task_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    task = crud.get_task(db, task_id, current_user["id"])
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    return {
+        "task_id": task.id,
+        "title": task.title,
+        "due_date": str(task.due_date) if task.due_date else None,
+        "due_datetime": str(task.due_datetime) if task.due_datetime else None,
+        "deadline_info": task.deadline_info,
+    }
 
 
 # -- Feature 7: Task Activity -------------------------------------------------

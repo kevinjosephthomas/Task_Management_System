@@ -8,6 +8,8 @@ export default function Auth({ onLogin }) {
   const [mode, setMode] = useState("login"); // "login" or "register"
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [fullName, setFullName] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,7 +22,10 @@ export default function Auth({ onLogin }) {
 
     try {
       const endpoint = mode === "login" ? "/auth/login" : "/auth/register";
-      const response = await axios.post(`${API_URL}${endpoint}`, { email, password });
+      const payload = mode === "login"
+        ? { email, password }
+        : { email, password, username: username || undefined, full_name: fullName || undefined };
+      const response = await axios.post(`${API_URL}${endpoint}`, payload);
 
       if (mode === "register") {
         setSuccess("Account created! Please log in.");
@@ -42,7 +47,7 @@ export default function Auth({ onLogin }) {
   return (
     <div className="auth-container">
       <div className="auth-card">
-        <div className="auth-logo">✅</div>
+        <div className="auth-logo">{"✅"}</div>
         <h1>{mode === "login" ? "Welcome back" : "Create account"}</h1>
         <p className="auth-subtitle">
           {mode === "login" ? "Sign in to manage your tasks" : "Start organising your work today"}
@@ -64,6 +69,35 @@ export default function Auth({ onLogin }) {
               autoComplete="email"
             />
           </label>
+
+          {mode === "register" && (
+            <>
+              <label className="auth-label">
+                Username (optional)
+                <input
+                  id="auth-username"
+                  type="text"
+                  placeholder="cooluser"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  minLength={3}
+                  autoComplete="username"
+                />
+              </label>
+              <label className="auth-label">
+                Full Name (optional)
+                <input
+                  id="auth-fullname"
+                  type="text"
+                  placeholder="Your Name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  autoComplete="name"
+                />
+              </label>
+            </>
+          )}
+
           <label className="auth-label">
             Password
             <input

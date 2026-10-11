@@ -1,0 +1,44 @@
+.deadline-countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.deadline-overdue {
+  background: #fdecea;
+  color: #b71c1c;
+}
+
+.deadline-urgent {
+  background: #fff3cd;
+  color: #856404;
+  animation: pulse-urgent 2s ease-in-out infinite;
+}
+
+.deadline-soon {
+  background: #fff8e1;
+  color: #f57f17;
+}
+
+.deadline-normal {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.deadline-icon {
+  font-size: 0.8rem;
+}
+
+.deadline-text {
+  white-space: nowrap;
+}
+
+@keyframes pulse-urgent {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}

@@ -7,6 +7,8 @@ export default function TaskForm({ onCreated }) {
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("medium");
   const [dueDate, setDueDate] = useState("");
+  const [dueDateTime, setDueDateTime] = useState("");
+  const [assignedToEmail, setAssignedToEmail] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -21,11 +23,15 @@ export default function TaskForm({ onCreated }) {
         description: description || null,
         priority,
         due_date: dueDate || null,
+        due_datetime: dueDateTime || null,
+        assigned_to_email: assignedToEmail || null,
       });
       setTitle("");
       setDescription("");
       setPriority("medium");
       setDueDate("");
+      setDueDateTime("");
+      setAssignedToEmail("");
       setOpen(false);
       if (onCreated) onCreated();
     } catch (e) {
@@ -89,6 +95,21 @@ export default function TaskForm({ onCreated }) {
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
                 title="Due date (optional)"
+              />
+            </div>
+            <div className="form-row">
+              <input
+                type="datetime-local"
+                value={dueDateTime}
+                onChange={(e) => setDueDateTime(e.target.value)}
+                title="Due date & time (optional)"
+              />
+              <input
+                type="email"
+                value={assignedToEmail}
+                onChange={(e) => setAssignedToEmail(e.target.value)}
+                placeholder="Assign to email (optional)"
+                title="Assign task to user by email"
               />
             </div>
             <div className="form-actions">

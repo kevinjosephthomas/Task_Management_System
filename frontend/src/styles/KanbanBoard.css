@@ -277,6 +277,21 @@
   background: #f0f0f0;
 }
 
+.task-assigned-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #667eea;
+  background: #f0f4ff;
+  padding: 2px 8px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty-column {
   text-align: center;
   color: #bbb;

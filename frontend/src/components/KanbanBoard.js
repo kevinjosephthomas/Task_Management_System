@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { getTasks, searchTasks, updateTask, deleteTask, errorMessage } from "../api";
 import TaskActivityTimeline from "./TaskActivityTimeline";
 import SubtaskList from "./SubtaskList";
+import DeadlineCountdown from "./DeadlineCountdown";
 import "../styles/KanbanBoard.css";
 
 const COLUMNS = [
@@ -144,10 +145,20 @@ export default function KanbanBoard({ onTaskChanged, searchParams }) {
                       <p className="task-description">{task.description}</p>
                     )}
 
-                    {task.due_date && (
+                    {task.deadline_info && (
+                      <DeadlineCountdown deadlineInfo={task.deadline_info} />
+                    )}
+
+                    {task.due_date && !task.deadline_info && (
                       <div className={`task-due${isOverdue ? " overdue-label" : ""}`}>
                         {new Date(task.due_date + "T00:00").toLocaleDateString()}
                         {isOverdue && " — Overdue!"}
+                      </div>
+                    )}
+
+                    {task.assigned_to_email && (
+                      <div className="task-assigned-badge" title={`Assigned to ${task.assigned_to_email}`}>
+                        {"👤"} {task.assigned_to_email.split("@")[0]}
                       </div>
                     )}
 

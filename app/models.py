@@ -13,10 +13,17 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String(255), nullable=False, unique=True, index=True)
-    hashed_password = Column(String(255), nullable=False)
+    hashed_password = Column(String(255), nullable=True)
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+    username = Column(String(100), nullable=True, unique=True)
+    full_name = Column(String(255), nullable=True)
+    bio = Column(Text, nullable=True)
+    profile_picture_url = Column(String(500), nullable=True)
+    google_id = Column(String(255), nullable=True, unique=True)
+    oauth_provider = Column(String(50), nullable=True)
+    timezone = Column(String(50), nullable=True, server_default=text("'UTC'"))
 
-    tasks = relationship("Task", back_populates="owner", cascade="all, delete-orphan")
+    tasks = relationship("Task", back_populates="owner", foreign_keys="Task.user_id", cascade="all, delete-orphan")
 
 
 class Task(Base):
@@ -32,14 +39,21 @@ class Task(Base):
     status = Column(Text, nullable=False, default="pending", server_default="pending")
     priority = Column(Text, nullable=False, default="medium", server_default="medium")
     due_date = Column(Date, nullable=True)
+    due_datetime = Column(TIMESTAMP, nullable=True)
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    assigned_to_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
-    owner = relationship("User", back_populates="tasks")
+    owner = relationship("User", back_populates="tasks", foreign_keys=[user_id])
+    assigned_to = relationship("User", foreign_keys=[assigned_to_id])
+    assigned_by = relationship("User", foreign_keys=[assigned_by_id])
     activities = relationship("TaskActivity", back_populates="task", cascade="all, delete-orphan")
     subtasks = relationship("Subtask", back_populates="task", cascade="all, delete-orphan")
     shared_entries = relationship("SharedTask", back_populates="task", cascade="all, delete-orphan")
     comments = relationship("TaskComment", back_populates="task", cascade="all, delete-orphan")
+    collaborators = relationship("TaskCollaborator", back_populates="task", cascade="all, delete-orphan")
+    notifications = relationship("TaskNotification", back_populates="task", cascade="all, delete-orphan")
 
 
 class TaskActivity(Base):
@@ -102,3 +116,34 @@ class TaskComment(Base):
 
     task = relationship("Task", back_populates="comments")
     user = relationship("User", foreign_keys=[user_id])
+
+
+class TaskCollaborator(Base):
+    __tablename__ = "task_collaborators"
+    __table_args__ = (
+        UniqueConstraint("task_id", "user_id", name="uq_task_collaborator"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False, default="viewer", server_default=text("'viewer'"))
+    created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+
+    task = relationship("Task", back_populates="collaborators")
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class TaskNotification(Base):
+    __tablename__ = "task_notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id = Column(Integer, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True)
+    type = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    read = Column(Boolean, nullable=False, default=False, server_default=text("0"))
+    created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+
+    user = relationship("User", foreign_keys=[user_id])
+    task = relationship("Task", back_populates="notifications")
