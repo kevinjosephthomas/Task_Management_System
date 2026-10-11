@@ -37,6 +37,48 @@ export const deleteTask = (id) => client.delete(`/tasks/${id}`);
 export const getTaskStats = () =>
   client.get("/tasks/stats/summary").then((r) => r.data);
 
+// Feature 5: Search & Filter
+export const searchTasks = (filters, skip = 0, limit = 100) =>
+  client.post("/tasks/search", filters, { params: { skip, limit } }).then((r) => r.data);
+
+// Feature 6: Reminders
+export const getOverdueTasks = () =>
+  client.get("/tasks/reminders/overdue").then((r) => r.data);
+export const getUpcomingTasks = (daysAhead = 3) =>
+  client.get("/tasks/reminders/upcoming", { params: { days_ahead: daysAhead } }).then((r) => r.data);
+
+// Feature 7: Activity
+export const getTaskActivity = (taskId) =>
+  client.get(`/tasks/${taskId}/activity`).then((r) => r.data);
+export const getUserActivitySummary = (limit = 20) =>
+  client.get("/tasks/user/activity-summary", { params: { limit } }).then((r) => r.data);
+
+// Feature 8: Subtasks
+export const getSubtasks = (taskId) =>
+  client.get(`/tasks/${taskId}/subtasks`).then((r) => r.data);
+export const createSubtask = (taskId, data) =>
+  client.post(`/tasks/${taskId}/subtasks`, data).then((r) => r.data);
+export const updateSubtask = (taskId, subtaskId, data) =>
+  client.put(`/tasks/${taskId}/subtasks/${subtaskId}`, data).then((r) => r.data);
+export const deleteSubtask = (taskId, subtaskId) =>
+  client.delete(`/tasks/${taskId}/subtasks/${subtaskId}`);
+export const getSubtaskCompletion = (taskId) =>
+  client.get(`/tasks/${taskId}/subtasks/completion`).then((r) => r.data);
+
+// Feature 9: Collaboration
+export const shareTask = (taskId, email, permission = "view") =>
+  client.post(`/tasks/${taskId}/share`, { email, permission }).then((r) => r.data);
+export const addComment = (taskId, content) =>
+  client.post(`/tasks/${taskId}/comments`, { content }).then((r) => r.data);
+export const getComments = (taskId) =>
+  client.get(`/tasks/${taskId}/comments`).then((r) => r.data);
+export const getSharedTasks = () =>
+  client.get("/tasks/shared").then((r) => r.data);
+
+// Feature 10: Export CSV
+export const exportCSV = (filters) =>
+  client.post("/tasks/export/csv", filters, { responseType: "blob" }).then((r) => r.data);
+
 // Turn any axios error into a readable string
 export function errorMessage(err) {
   if (!err.response) return "Cannot reach the server. Is the backend running?";

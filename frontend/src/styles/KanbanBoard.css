@@ -219,6 +219,64 @@
   background: #fdecea;
 }
 
+.kanban-result-count {
+  text-align: center;
+  font-size: 0.85rem;
+  color: #667eea;
+  font-weight: 600;
+  padding: 4px 0;
+}
+
+.task-subtask-progress {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.mini-progress-track {
+  flex: 1;
+  height: 4px;
+  background: #e9ecef;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.mini-progress-fill {
+  height: 100%;
+  background: #28a745;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.mini-progress-text {
+  font-size: 0.7rem;
+  color: #888;
+  white-space: nowrap;
+}
+
+.task-card-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.action-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  opacity: 0.5;
+  transition: opacity 0.2s;
+  padding: 0.2rem 0.3rem;
+  border-radius: 4px;
+}
+
+.action-btn:hover {
+  opacity: 1;
+  background: #f0f0f0;
+}
+
 .empty-column {
   text-align: center;
   color: #bbb;

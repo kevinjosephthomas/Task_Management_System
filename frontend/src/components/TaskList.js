@@ -2,19 +2,25 @@ import React, { useState, useCallback } from "react";
 import KanbanBoard from "./KanbanBoard";
 import TaskForm from "./TaskForm";
 import Analytics from "./Analytics";
+import SearchBar from "./SearchBar";
 import "../styles/TaskList.css";
 
 const VIEWS = [
-  { id: "kanban",    label: "📊 Kanban" },
-  { id: "analytics", label: "📈 Analytics" },
+  { id: "kanban",    label: "Kanban" },
+  { id: "analytics", label: "Analytics" },
 ];
 
 export default function TaskList() {
   const [view, setView] = useState("kanban");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [searchParams, setSearchParams] = useState({});
 
   const handleTaskCreated = useCallback(() => {
     setRefreshKey((k) => k + 1);
+  }, []);
+
+  const handleSearch = useCallback((params) => {
+    setSearchParams(params);
   }, []);
 
   return (
@@ -33,8 +39,14 @@ export default function TaskList() {
       </div>
 
       {view !== "analytics" && <TaskForm onCreated={handleTaskCreated} />}
+      {view === "kanban" && <SearchBar onSearch={handleSearch} />}
 
-      {view === "kanban" && <KanbanBoard key={refreshKey} />}
+      {view === "kanban" && (
+        <KanbanBoard
+          key={refreshKey}
+          searchParams={searchParams}
+        />
+      )}
       {view === "analytics" && <Analytics />}
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import Auth from "./pages/Auth";
 import TaskList from "./components/TaskList";
+import NotificationBell from "./components/NotificationBell";
 import "./App.css";
 
 export default function App() {
@@ -36,10 +37,11 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="app-header-brand">
-          <span className="app-logo">✅</span>
+          <span className="app-logo">{"✅"}</span>
           <h1>Task Manager</h1>
         </div>
         <div className="app-header-user">
+          <NotificationBell />
           <span className="user-email" title={userEmail}>{userEmail}</span>
           <button id="logout-btn" className="logout-btn" onClick={handleLogout}>
             Log Out
