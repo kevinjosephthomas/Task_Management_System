@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from "react";
-import { getTasks, updateTask, deleteTask, errorMessage } from "../api";
+import { getTasks, searchTasks, updateTask, deleteTask, errorMessage } from "../api";
+import TaskActivityTimeline from "./TaskActivityTimeline";
+import SubtaskList from "./SubtaskList";
 import "../styles/KanbanBoard.css";
 
 const COLUMNS = [
@@ -10,16 +12,27 @@ const COLUMNS = [
 
 const PRIORITY_COLORS = { high: "#dc3545", medium: "#fd7e14", low: "#20c997" };
 
-export default function KanbanBoard({ onTaskChanged }) {
+export default function KanbanBoard({ onTaskChanged, searchParams }) {
   const [tasks, setTasks] = useState({ pending: [], "in-progress": [], completed: [] });
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [draggedTask, setDraggedTask] = useState(null);
   const [dragOver, setDragOver] = useState(null);
+  const [resultCount, setResultCount] = useState(null);
+  const [activityTaskId, setActivityTaskId] = useState(null);
+  const [subtaskTaskId, setSubtaskTaskId] = useState(null);
 
   const loadTasks = async () => {
     try {
-      const all = await getTasks();
+      let all;
+      if (searchParams && Object.keys(searchParams).length > 0) {
+        const result = await searchTasks(searchParams);
+        all = result.tasks;
+        setResultCount(result.total);
+      } else {
+        all = await getTasks();
+        setResultCount(null);
+      }
       const byStatus = { pending: [], "in-progress": [], completed: [] };
       all.forEach((t) => { if (byStatus[t.status]) byStatus[t.status].push(t); });
       setTasks(byStatus);
@@ -34,9 +47,8 @@ export default function KanbanBoard({ onTaskChanged }) {
     loadTasks();
     const timer = setInterval(loadTasks, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [searchParams]);
 
-  // Allow parent to trigger a refresh (e.g. after creating a task)
   useEffect(() => { if (onTaskChanged) loadTasks(); }, [onTaskChanged]);
 
   const handleStatusChange = async (taskId, newStatus) => {
@@ -68,16 +80,22 @@ export default function KanbanBoard({ onTaskChanged }) {
     setDragOver(null);
   };
 
-  const today = new Date().toISOString().split("T")[0];
+  if (loading) return <div className="kanban-loading"><span className="spinner" />Loading tasks...</div>;
 
-  if (loading) return <div className="kanban-loading"><span className="spinner" />Loading tasks…</div>;
+  const totalTasks = Object.values(tasks).reduce((sum, arr) => sum + arr.length, 0);
 
   return (
     <div className="kanban-container">
       {error && (
         <div className="kanban-error" role="alert">
           {error}
-          <button onClick={() => setError("")} aria-label="dismiss">×</button>
+          <button onClick={() => setError("")} aria-label="dismiss">&times;</button>
+        </div>
+      )}
+
+      {resultCount !== null && (
+        <div className="kanban-result-count">
+          Showing {totalTasks} of {resultCount} results
         </div>
       )}
 
@@ -101,6 +119,7 @@ export default function KanbanBoard({ onTaskChanged }) {
               {(tasks[status] || []).map((task) => {
                 const isOverdue = task.is_overdue;
                 const isDragging = draggedTask?.id === task.id;
+                const hasSubtasks = task.subtask_completion && task.subtask_completion.total > 0;
                 return (
                   <div
                     key={task.id}
@@ -127,8 +146,22 @@ export default function KanbanBoard({ onTaskChanged }) {
 
                     {task.due_date && (
                       <div className={`task-due${isOverdue ? " overdue-label" : ""}`}>
-                        📅 {new Date(task.due_date + "T00:00").toLocaleDateString()}
+                        {new Date(task.due_date + "T00:00").toLocaleDateString()}
                         {isOverdue && " — Overdue!"}
+                      </div>
+                    )}
+
+                    {hasSubtasks && (
+                      <div className="task-subtask-progress">
+                        <div className="mini-progress-track">
+                          <div
+                            className="mini-progress-fill"
+                            style={{ width: `${task.subtask_completion.percentage}%` }}
+                          />
+                        </div>
+                        <span className="mini-progress-text">
+                          {task.subtask_completion.completed}/{task.subtask_completion.total}
+                        </span>
                       </div>
                     )}
 
@@ -143,14 +176,30 @@ export default function KanbanBoard({ onTaskChanged }) {
                           <option key={s} value={s}>{l}</option>
                         ))}
                       </select>
-                      <button
-                        className="delete-btn"
-                        onClick={() => handleDelete(task.id)}
-                        aria-label={`Delete ${task.title}`}
-                        title="Delete task"
-                      >
-                        🗑
-                      </button>
+                      <div className="task-card-actions">
+                        <button
+                          className="action-btn"
+                          onClick={() => setSubtaskTaskId(task.id)}
+                          title="Checklist"
+                        >
+                          &#x2611;
+                        </button>
+                        <button
+                          className="action-btn"
+                          onClick={() => setActivityTaskId(task.id)}
+                          title="Activity"
+                        >
+                          &#x1F4CB;
+                        </button>
+                        <button
+                          className="delete-btn"
+                          onClick={() => handleDelete(task.id)}
+                          aria-label={`Delete ${task.title}`}
+                          title="Delete task"
+                        >
+                          &#x1F5D1;
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -164,6 +213,20 @@ export default function KanbanBoard({ onTaskChanged }) {
           </div>
         ))}
       </div>
+
+      {activityTaskId && (
+        <TaskActivityTimeline
+          taskId={activityTaskId}
+          onClose={() => setActivityTaskId(null)}
+        />
+      )}
+
+      {subtaskTaskId && (
+        <SubtaskList
+          taskId={subtaskTaskId}
+          onClose={() => { setSubtaskTaskId(null); loadTasks(); }}
+        />
+      )}
     </div>
   );
 }

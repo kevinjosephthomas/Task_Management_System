@@ -1,7 +1,8 @@
 """Database operations."""
-from datetime import date
-from typing import List, Optional
+from datetime import date, timedelta
+from typing import List, Optional, Tuple
 
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app import models, schemas
@@ -9,7 +10,7 @@ from app.auth import hash_password, verify_password
 from app.transitions import validate_transition
 
 
-# ── User operations ───────────────────────────────────────────────────────────
+# -- User operations -----------------------------------------------------------
 
 def create_user(db: Session, email: str, password: str) -> models.User:
     """Create a new user. Raise ValueError if email already exists."""
@@ -35,12 +36,31 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[models
     return user
 
 
-# ── Task operations ───────────────────────────────────────────────────────────
+# -- Task operations -----------------------------------------------------------
 
 def _compute_overdue(task: models.Task) -> models.Task:
     task.is_overdue = bool(
         task.due_date and task.due_date < date.today() and task.status != "completed"
     )
+    return task
+
+
+def _compute_subtask_completion(db: Session, task: models.Task) -> models.Task:
+    total = db.query(func.count(models.Subtask.id)).filter(
+        models.Subtask.task_id == task.id
+    ).scalar() or 0
+    completed = db.query(func.count(models.Subtask.id)).filter(
+        models.Subtask.task_id == task.id,
+        models.Subtask.completed == True,
+    ).scalar() or 0
+    percentage = round((completed / total * 100), 1) if total > 0 else 0.0
+    task.subtask_completion = {"total": total, "completed": completed, "percentage": percentage}
+    return task
+
+
+def _enrich_task(db: Session, task: models.Task) -> models.Task:
+    _compute_overdue(task)
+    _compute_subtask_completion(db, task)
     return task
 
 
@@ -56,7 +76,8 @@ def create_task(db: Session, user_id: int, data: schemas.TaskCreate) -> models.T
     db.add(task)
     db.commit()
     db.refresh(task)
-    return _compute_overdue(task)
+    log_activity(db, task.id, user_id, "created", new_value=task.title)
+    return _enrich_task(db, task)
 
 
 def list_tasks(
@@ -81,7 +102,7 @@ def list_tasks(
     else:
         query = query.order_by(models.Task.created_at.desc())
 
-    return [_compute_overdue(t) for t in query.all()]
+    return [_enrich_task(db, t) for t in query.all()]
 
 
 def get_task(db: Session, task_id: int, user_id: int) -> Optional[models.Task]:
@@ -89,27 +110,404 @@ def get_task(db: Session, task_id: int, user_id: int) -> Optional[models.Task]:
         models.Task.id == task_id,
         models.Task.user_id == user_id,
     ).first()
-    return _compute_overdue(task) if task else None
+    return _enrich_task(db, task) if task else None
 
 
-def update_task(db: Session, task: models.Task, data: schemas.TaskUpdate) -> models.Task:
+def update_task(db: Session, task: models.Task, data: schemas.TaskUpdate, user_id: int = None) -> models.Task:
     changes = data.model_dump(exclude_unset=True)
     if "title" in changes and changes["title"] is None:
         raise ValueError("title cannot be null")
     if "status" in changes:
         if changes["status"] is None:
             raise ValueError("status cannot be null")
-        validate_transition(task.status, changes["status"].value)  # may raise InvalidTransition
+        validate_transition(task.status, changes["status"].value)
         changes["status"] = changes["status"].value
+
     if "priority" in changes and changes["priority"] is not None:
         changes["priority"] = changes["priority"].value
+
+    uid = user_id or task.user_id
     for key, value in changes.items():
+        old_val = str(getattr(task, key)) if getattr(task, key) is not None else None
+        new_val = str(value) if value is not None else None
+        action = "status_changed" if key == "status" else "updated"
+        if old_val != new_val:
+            log_activity(db, task.id, uid, action, field_name=key, old_value=old_val, new_value=new_val)
         setattr(task, key, value)
+
     db.commit()
     db.refresh(task)
-    return _compute_overdue(task)
+    return _enrich_task(db, task)
 
 
-def delete_task(db: Session, task: models.Task) -> None:
+def delete_task(db: Session, task: models.Task, user_id: int = None) -> None:
     db.delete(task)
     db.commit()
+
+
+# -- Feature 5: Search & Filter -----------------------------------------------
+
+PRIORITY_ORDER = {"high": 1, "medium": 2, "low": 3}
+
+
+def search_and_filter_tasks(
+    db: Session,
+    user_id: int,
+    search: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    sort_by: Optional[str] = "created_at",
+    sort_order: Optional[str] = "desc",
+    due_date_from: Optional[date] = None,
+    due_date_to: Optional[date] = None,
+    limit: int = 100,
+    offset: int = 0,
+) -> Tuple[int, List[models.Task]]:
+    query = db.query(models.Task).filter(models.Task.user_id == user_id)
+
+    if search:
+        pattern = f"%{search.lower()}%"
+        query = query.filter(
+            or_(
+                func.lower(models.Task.title).like(pattern),
+                func.lower(models.Task.description).like(pattern),
+            )
+        )
+
+    if status:
+        query = query.filter(models.Task.status == status)
+    if priority:
+        query = query.filter(models.Task.priority == priority)
+    if due_date_from:
+        query = query.filter(models.Task.due_date >= due_date_from)
+    if due_date_to:
+        query = query.filter(models.Task.due_date <= due_date_to)
+
+    total = query.count()
+
+    is_desc = sort_order == "desc"
+    if sort_by == "due_date":
+        col = models.Task.due_date.desc() if is_desc else models.Task.due_date.asc()
+        query = query.order_by(col.nullslast())
+    elif sort_by == "priority":
+        col = models.Task.priority.desc() if is_desc else models.Task.priority.asc()
+        query = query.order_by(col)
+    elif sort_by == "status":
+        col = models.Task.status.desc() if is_desc else models.Task.status.asc()
+        query = query.order_by(col)
+    elif sort_by == "title":
+        col = models.Task.title.desc() if is_desc else models.Task.title.asc()
+        query = query.order_by(col)
+    else:
+        col = models.Task.created_at.desc() if is_desc else models.Task.created_at.asc()
+        query = query.order_by(col)
+
+    limit = min(limit, 500)
+    tasks = query.offset(offset).limit(limit).all()
+    return total, [_enrich_task(db, t) for t in tasks]
+
+
+# -- Feature 6: Reminders -----------------------------------------------------
+
+def get_overdue_tasks(db: Session, user_id: int) -> List[dict]:
+    today = date.today()
+    tasks = db.query(models.Task).filter(
+        models.Task.user_id == user_id,
+        models.Task.due_date < today,
+        models.Task.status != "completed",
+    ).order_by(models.Task.due_date.asc()).all()
+
+    return [
+        {
+            "id": t.id,
+            "title": t.title,
+            "due_date": str(t.due_date),
+            "status": t.status,
+            "priority": t.priority,
+            "days_overdue": (today - t.due_date).days,
+        }
+        for t in tasks
+    ]
+
+
+def get_upcoming_tasks(db: Session, user_id: int, days_ahead: int = 3) -> List[dict]:
+    today = date.today()
+    end = today + timedelta(days=days_ahead)
+    tasks = db.query(models.Task).filter(
+        models.Task.user_id == user_id,
+        models.Task.due_date >= today,
+        models.Task.due_date <= end,
+        models.Task.status != "completed",
+    ).order_by(models.Task.due_date.asc()).all()
+
+    return [
+        {
+            "id": t.id,
+            "title": t.title,
+            "due_date": str(t.due_date),
+            "status": t.status,
+            "priority": t.priority,
+            "days_until_due": (t.due_date - today).days,
+        }
+        for t in tasks
+    ]
+
+
+# -- Feature 7: Activity logging -----------------------------------------------
+
+def log_activity(
+    db: Session,
+    task_id: int,
+    user_id: int,
+    action: str,
+    field_name: Optional[str] = None,
+    old_value: Optional[str] = None,
+    new_value: Optional[str] = None,
+) -> models.TaskActivity:
+    activity = models.TaskActivity(
+        task_id=task_id,
+        user_id=user_id,
+        action=action,
+        field_name=field_name,
+        old_value=old_value,
+        new_value=new_value,
+    )
+    db.add(activity)
+    db.commit()
+    db.refresh(activity)
+    return activity
+
+
+def get_task_activity(db: Session, task_id: int, user_id: int) -> Optional[List[dict]]:
+    task = db.query(models.Task).filter(
+        models.Task.id == task_id,
+        models.Task.user_id == user_id,
+    ).first()
+    if not task:
+        return None
+
+    activities = db.query(models.TaskActivity).filter(
+        models.TaskActivity.task_id == task_id,
+    ).order_by(models.TaskActivity.created_at.desc()).all()
+
+    result = []
+    for a in activities:
+        user = db.get(models.User, a.user_id)
+        result.append({
+            "id": a.id,
+            "action": a.action,
+            "field_name": a.field_name,
+            "old_value": a.old_value,
+            "new_value": a.new_value,
+            "user_email": user.email if user else None,
+            "created_at": str(a.created_at) if a.created_at else None,
+        })
+    return result
+
+
+def get_user_activity_summary(db: Session, user_id: int, limit: int = 20) -> List[dict]:
+    activities = (
+        db.query(models.TaskActivity)
+        .join(models.Task, models.TaskActivity.task_id == models.Task.id)
+        .filter(models.Task.user_id == user_id)
+        .order_by(models.TaskActivity.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    result = []
+    for a in activities:
+        task = db.get(models.Task, a.task_id)
+        result.append({
+            "id": a.id,
+            "task_id": a.task_id,
+            "task_title": task.title if task else None,
+            "action": a.action,
+            "field_name": a.field_name,
+            "old_value": a.old_value,
+            "new_value": a.new_value,
+            "created_at": str(a.created_at) if a.created_at else None,
+        })
+    return result
+
+
+# -- Feature 8: Subtasks ------------------------------------------------------
+
+def create_subtask(db: Session, task_id: int, user_id: int, data: schemas.SubtaskCreate) -> Optional[models.Subtask]:
+    task = db.query(models.Task).filter(
+        models.Task.id == task_id,
+        models.Task.user_id == user_id,
+    ).first()
+    if not task:
+        return None
+
+    max_pos = db.query(func.max(models.Subtask.position)).filter(
+        models.Subtask.task_id == task_id,
+    ).scalar() or 0
+
+    subtask = models.Subtask(
+        task_id=task_id,
+        title=data.title,
+        description=data.description,
+        position=max_pos + 1,
+    )
+    db.add(subtask)
+    db.commit()
+    db.refresh(subtask)
+    log_activity(db, task_id, user_id, "updated", field_name="subtask", new_value=f"Added: {data.title}")
+    return subtask
+
+
+def get_subtasks(db: Session, task_id: int, user_id: int) -> Optional[List[models.Subtask]]:
+    task = db.query(models.Task).filter(
+        models.Task.id == task_id,
+        models.Task.user_id == user_id,
+    ).first()
+    if not task:
+        return None
+    return db.query(models.Subtask).filter(
+        models.Subtask.task_id == task_id,
+    ).order_by(models.Subtask.position.asc()).all()
+
+
+def get_subtask(db: Session, subtask_id: int, user_id: int) -> Optional[models.Subtask]:
+    subtask = db.get(models.Subtask, subtask_id)
+    if not subtask:
+        return None
+    task = db.query(models.Task).filter(
+        models.Task.id == subtask.task_id,
+        models.Task.user_id == user_id,
+    ).first()
+    if not task:
+        return None
+    return subtask
+
+
+def update_subtask(db: Session, subtask: models.Subtask, user_id: int, data: schemas.SubtaskUpdate) -> models.Subtask:
+    changes = data.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        setattr(subtask, key, value)
+    db.commit()
+    db.refresh(subtask)
+    log_activity(db, subtask.task_id, user_id, "updated", field_name="subtask", new_value=f"Updated: {subtask.title}")
+    return subtask
+
+
+def delete_subtask(db: Session, subtask: models.Subtask, user_id: int) -> None:
+    log_activity(db, subtask.task_id, user_id, "updated", field_name="subtask", new_value=f"Deleted: {subtask.title}")
+    db.delete(subtask)
+    db.commit()
+
+
+def get_subtask_completion(db: Session, task_id: int) -> dict:
+    total = db.query(func.count(models.Subtask.id)).filter(
+        models.Subtask.task_id == task_id,
+    ).scalar() or 0
+    completed = db.query(func.count(models.Subtask.id)).filter(
+        models.Subtask.task_id == task_id,
+        models.Subtask.completed == True,
+    ).scalar() or 0
+    percentage = round((completed / total * 100), 1) if total > 0 else 0.0
+    return {"total": total, "completed": completed, "percentage": percentage}
+
+
+# -- Feature 9: Collaboration -------------------------------------------------
+
+def share_task(db: Session, task_id: int, owner_id: int, shared_with_email: str, permission: str = "view") -> Optional[models.SharedTask]:
+    task = db.query(models.Task).filter(
+        models.Task.id == task_id,
+        models.Task.user_id == owner_id,
+    ).first()
+    if not task:
+        return None
+
+    target_user = get_user_by_email(db, shared_with_email)
+    if not target_user:
+        raise ValueError(f"User {shared_with_email} not found")
+    if target_user.id == owner_id:
+        raise ValueError("Cannot share task with yourself")
+
+    existing = db.query(models.SharedTask).filter(
+        models.SharedTask.task_id == task_id,
+        models.SharedTask.owner_id == owner_id,
+        models.SharedTask.shared_with_id == target_user.id,
+    ).first()
+    if existing:
+        raise ValueError("Task already shared with this user")
+
+    shared = models.SharedTask(
+        task_id=task_id,
+        owner_id=owner_id,
+        shared_with_id=target_user.id,
+        permission=permission,
+    )
+    db.add(shared)
+    db.commit()
+    db.refresh(shared)
+    return shared
+
+
+def is_collaborator(db: Session, task_id: int, user_id: int) -> bool:
+    return db.query(models.SharedTask).filter(
+        models.SharedTask.task_id == task_id,
+        models.SharedTask.shared_with_id == user_id,
+    ).first() is not None
+
+
+def can_access_task(db: Session, task_id: int, user_id: int) -> bool:
+    task = db.query(models.Task).filter(models.Task.id == task_id).first()
+    if not task:
+        return False
+    if task.user_id == user_id:
+        return True
+    return is_collaborator(db, task_id, user_id)
+
+
+def add_comment(db: Session, task_id: int, user_id: int, content: str) -> Optional[models.TaskComment]:
+    if not can_access_task(db, task_id, user_id):
+        return None
+
+    comment = models.TaskComment(
+        task_id=task_id,
+        user_id=user_id,
+        content=content,
+    )
+    db.add(comment)
+    db.commit()
+    db.refresh(comment)
+    return comment
+
+
+def get_comments(db: Session, task_id: int, user_id: int) -> Optional[List[dict]]:
+    if not can_access_task(db, task_id, user_id):
+        return None
+
+    comments = db.query(models.TaskComment).filter(
+        models.TaskComment.task_id == task_id,
+    ).order_by(models.TaskComment.created_at.desc()).all()
+
+    result = []
+    for c in comments:
+        user = db.get(models.User, c.user_id)
+        result.append({
+            "id": c.id,
+            "task_id": c.task_id,
+            "user_email": user.email if user else None,
+            "content": c.content,
+            "created_at": str(c.created_at) if c.created_at else None,
+            "updated_at": str(c.updated_at) if c.updated_at else None,
+        })
+    return result
+
+
+def get_shared_tasks_for_user(db: Session, user_id: int) -> List[models.Task]:
+    shared = db.query(models.SharedTask).filter(
+        models.SharedTask.shared_with_id == user_id,
+    ).all()
+    tasks = []
+    for s in shared:
+        task = db.get(models.Task, s.task_id)
+        if task:
+            _enrich_task(db, task)
+            tasks.append(task)
+    return tasks

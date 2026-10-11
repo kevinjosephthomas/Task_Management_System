@@ -1,7 +1,7 @@
 """Pydantic request/response schemas."""
 from datetime import date, datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -27,7 +27,7 @@ def _clean_title(v: Optional[str]) -> Optional[str]:
     return v
 
 
-# ── Auth schemas ──────────────────────────────────────────────────────────────
+# -- Auth schemas -------------------------------------------------------------
 
 class UserRegister(BaseModel):
     email: str = Field(..., min_length=3, max_length=255)
@@ -60,7 +60,7 @@ class UserOut(BaseModel):
     created_at: Optional[datetime] = None
 
 
-# ── Task schemas ──────────────────────────────────────────────────────────────
+# -- Task schemas --------------------------------------------------------------
 
 class TaskCreate(BaseModel):
     """New tasks always start as 'pending', so status is not accepted here."""
@@ -83,6 +83,18 @@ class TaskUpdate(BaseModel):
     _v_title = field_validator("title")(_clean_title)
 
 
+class SubtaskOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    title: str
+    description: Optional[str] = None
+    completed: bool = False
+    position: int = 0
+    created_at: Optional[datetime] = None
+
+
 class TaskOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -95,6 +107,8 @@ class TaskOut(BaseModel):
     created_at: Optional[datetime] = None
     user_id: Optional[int] = None
     is_overdue: Optional[bool] = None
+    subtasks: Optional[List[SubtaskOut]] = []
+    subtask_completion: Optional[dict] = None
 
 
 class TaskFilter(BaseModel):
@@ -105,3 +119,91 @@ class TaskFilter(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+# -- Feature 5: Search/Filter -------------------------------------------------
+
+class TaskFilterRequest(BaseModel):
+    search: Optional[str] = None
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    sort_by: Optional[str] = "created_at"
+    sort_order: Optional[str] = "desc"
+    due_date_from: Optional[date] = None
+    due_date_to: Optional[date] = None
+
+
+class TaskListResponse(BaseModel):
+    total: int
+    count: int
+    tasks: List[TaskOut]
+
+
+# -- Feature 7: Task Activity -------------------------------------------------
+
+class ActivityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action: str
+    field_name: Optional[str] = None
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    user_email: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+class ActivitySummaryItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    task_title: Optional[str] = None
+    action: str
+    field_name: Optional[str] = None
+    old_value: Optional[str] = None
+    new_value: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+# -- Feature 8: Subtasks ------------------------------------------------------
+
+class SubtaskCreate(BaseModel):
+    title: str = Field(..., max_length=255)
+    description: Optional[str] = None
+
+
+class SubtaskUpdate(BaseModel):
+    title: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+    completed: Optional[bool] = None
+    position: Optional[int] = None
+
+
+# -- Feature 9: Collaboration -------------------------------------------------
+
+class ShareTaskRequest(BaseModel):
+    email: str
+    permission: str = "view"
+
+    @field_validator("permission")
+    @classmethod
+    def validate_permission(cls, v: str) -> str:
+        if v not in ("view", "edit", "comment"):
+            raise ValueError("Permission must be 'view', 'edit', or 'comment'")
+        return v
+
+
+class CommentCreate(BaseModel):
+    content: str = Field(..., min_length=1, max_length=5000)
+
+
+class CommentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    task_id: int
+    user_email: Optional[str] = None
+    content: str
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
